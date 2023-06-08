@@ -1,10 +1,31 @@
-function ainv_testscript_mc80(problem,droptol,droptype,shift,shiftA_flag,linsolve_tol)
+function ainv_testscript_mc80(problem,droptol,droptype,shift,shiftA_flag,linsolve_tol,method,randomize)
 
 linsolve_tol = str2num(linsolve_tol);
 droptol = str2num(droptol);
 shift = str2num(shift);
 fprintf(strcat('\nProblem\t',problem,'\n'));
 A = mmread(problem);
+
+if ~exist("method", "var")
+    method = "";
+end
+
+% randomize values with same nonzero pattern of A
+goalcond = condest(A);
+if ~exist("randomize", "var")
+    randomize = false;
+end
+while randomize
+    for i = 1:length(A)
+        [idx, ~, value] = find(A(i:length(A),i));
+%         r = rand(length(idx), 1) .* (max(value) - min(value)) + (min(value));
+        r = value .* (rand(length(idx), 1) .* 0.2 + 0.9);
+        A(idx + i - 1, i) = r;
+        A(i, idx + i - 1) = r';
+    end
+    randomize = goalcond*1e2 < condest(A);
+end
+
 B = A - shift*speye(size(A));
 if strcmpi(shiftA_flag,'true')
     A = B;
@@ -68,7 +89,7 @@ lindata.order = order;
 
 mincost = realmax;
     
-optdata = matrixtest_update_ainv_mc80(lindata,droptol,droptype,linsolve_tol);
+optdata = matrixtest_update_ainv_mc80(lindata,droptol,droptype,linsolve_tol,method);
 if optdata.cost < mincost
     mincost = optdata.cost;
     minoptdata = optdata;

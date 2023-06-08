@@ -1,4 +1,4 @@
-function optdata = matrixtest_update_ainv_mc80(lindata,droptol,droptol_type,linsolve_tol)
+function optdata = matrixtest_update_ainv_mc80(lindata,droptol,droptol_type,linsolve_tol,method)
 
 warning off;
 A = lindata.A;  b = lindata.b;  SB = lindata.SB;    
@@ -24,11 +24,15 @@ while iter <= maxiter && droptol <= 5 && droptol >= 2*eps
     t_start1 = tic;
     
     pp = 1:n;
-%     [MM,DD] = spainv_sym_mc80(SB,order,droptol,droptol_type);
-%    [MM,DD, pp] = spainv_sym_hybrid(SB,order,droptol,droptol_type);
-   [MM,DD, pp] = spainv_sym_gbk(SB,1,droptol,droptol_type);
-%    [MM,DD] = ainv_basic_right(SB,order,droptol,droptol_type);
-%    [MM,DD] = ainv_mc80_right(SB,order,droptol,droptol_type);
+    if strcmpi(method,"hybrid")
+        [MM,DD, pp] = spainv_sym_hybrid(SB,order,droptol,droptol_type);
+    elseif strcmpi(method,"gbk")
+        [MM,DD, pp] = spainv_sym_gbk(SB,1,droptol,droptol_type);
+    elseif strcmpi(method, "leftlooking")
+        [MM,DD] = spainv_sym_mc80(SB,order,droptol,droptol_type);
+    else
+        [MM,DD] = spainv_sym_mc80(SB,order,droptol,droptol_type);
+    end
 
     t_elapsed1 = toc(t_start1);
     fprintf('nnz(M) over nnz of A, L, and dense trig is [%d %d %d]\n',...
