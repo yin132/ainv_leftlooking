@@ -25,9 +25,14 @@ invD = sparse(n,n);
 % alpha = (1+sqrt(17))/8;
 alpha = 1;
 p = 1:n;
-accept_small_pvt = false;
 c = 1;
 reordered = false;
+complete_reorder_step_size = floor(sqrt(n)/2);
+complete_reorder_step_count = 0;
+skip_pvt = 0;
+pvt_type = 1;
+pvt_interval = floor(sqrt(n)/2);
+% pvt_interval = 100;
 
 droptol_max = 5e-1;
 
@@ -42,14 +47,14 @@ while dd <= n
     else,               s = 2;
     end
     pvt_idx = dd:dd-1+s;
-    prj_pvt_cols = ((A*M(:,p(pvt_idx)))'*M(:,p(c:dd-1)))';
+    prj_pvt_cols = (A(:,p(pvt_idx))'*M(:,p(c:dd-1)))';
     
     M_pvtcols = M(:,p(pvt_idx)) - M(:,p(c:dd-1))*(invD(c:dd-1,c:dd-1)*prj_pvt_cols);
 
     % dropping small elements in the pivot columns, one column at a time
     for jj = 1 : s
         % assemble all nonzero elements in the current pivot column
-        [nzidx,~,tmpv] = find(M_pvtcols(p(1:dd-2+jj),jj));
+        [nzidx,~,tmpv] = find(M_pvtcols(p(1:dd-1+jj),jj));
         if ~isempty(nzidx)
             if strcmpi(droptol_type,'relative')
                 % sort the nodnzero elements in the current pivot column,
@@ -81,48 +86,56 @@ while dd <= n
     %check is next entries to D are acceptable, if not, then switch to
     %right looking to look for new pivot
     if s == 1
-        req_pivoting = (abs(nxt_pvt) <= 1e-6);
+        req_pivoting = (abs(nxt_pvt) <= 1e-10);
     else
-        req_pivoting = norm(nxt_pvt(:,1),"inf") <= 10e-4 || norm(nxt_pvt(:,2),"inf") <= 10e-4;
+        req_pivoting = norm(nxt_pvt(:,1),"inf") <= 10e-10 || norm(nxt_pvt(:,2),"inf") <= 10e-10;
     end
-    
-    if dd == 2 || dd == 3 || dd == 5 || dd == 8
+
+
+    if (mod(dd, floor(n/pvt_interval)) == 0 || mod(dd+s-1, floor(n/pvt_interval)) == 0) && (dd > skip_pvt-1)
         req_pivoting = true;
     end
-    if req_pivoting && (~accept_small_pvt)
-        accept_small_pvt = false;
+
+    if dd == 239
+        ra = 1;
+    end
+    pvt_type = 1;
+    if req_pivoting && (skip_pvt ~= dd)
+        skip_pvt = dd;
         reordered = false;
         %A-orthogonalize next 10? columns against the already processed columns
 %         search_cols = min(10, n - dd);
-        search_cols = n - dd;
+        search_cols = n - dd + 1;
         k = dd;
-        temp = sparse(n,search_cols + 1);
-        while k <= dd + search_cols && k <= n
-            if order(p(k)) > 0,    ks = 1;
-            else,               ks = 2;
-            end
-            k_pvt_idx = k:min([k-1+ks; n]);
-            k_prj_pvt_cols = ((A*M(:,p(k_pvt_idx)))'*M(:,p(c:dd-1)))';
-            k_M_pvtcols = M(:,p(k_pvt_idx)) - M(:,p(c:dd-1))*(invD(c:dd-1,c:dd-1)*k_prj_pvt_cols);
+        temp = sparse(n,search_cols);
 
-            for jj = 1:ks
+        k_pvt_idx = k:n;
+        k_prj_pvt_cols = M(:,p(c:dd-1))'*A(:,p(k_pvt_idx));
+        temp = M(:,p(k_pvt_idx))-M(:,p(c:dd-1))*(invD(c:dd-1,c:dd-1)*k_prj_pvt_cols);
+%         while k <= dd + search_cols - 1 && k <= n
+%             if order(p(k)) > 0,    ks = 1;
+%             else,               ks = 2;
+%             end
+%             k_pvt_idx = k:min([k-1+ks; n]);
+%             k_prj_pvt_cols = ((A*M(:,p(k_pvt_idx)))'*M(:,p(c:dd-1)))';
+%             k_M_pvtcols = M(:,p(k_pvt_idx)) - M(:,p(c:dd-1))*(invD(c:dd-1,c:dd-1)*k_prj_pvt_cols);
+% 
+            for jj = 1:search_cols
                 % remove elements by absolute drop tolerance
-                [nzidx,~,nzv] = find(k_M_pvtcols(:,jj));
-                temp(nzidx, k-dd+jj) = nzv.*(abs(nzv) >= droptol);
+                [nzidx,~,nzv] = find(temp(p(1:k+jj-1),jj));
                 M(p(nzidx), p(k+jj-1)) = nzv.*(abs(nzv) >= droptol);
             end
+% 
+%             m = k - dd + 1;
+%             k = k + ks;
+%         end
 
-            m = k - dd + 1;
-            k = k + ks;
-        end
-        c = dd;
-        
-        %pick out a pivot and perform swaps on A and M and order
+        %pick out a pivot and perform swaps on p
         A1 = ((A*temp(:,1))'*temp)';
         A1_skip1 = A1;  A1_skip1(1) = 0;
         % use the threshold beta to find the second candidate pivot row/column
         if dd < n
-            omega_1 = norm(A1_skip1(1:search_cols+1),'inf');
+            omega_1 = norm(A1_skip1(1:search_cols),'inf');
             r = find(abs(A1_skip1) >= omega_1,1);
         else
             omega_1 = 0;
@@ -134,8 +147,9 @@ while dd <= n
         % to beta times the largest off-diagonal element)
         if abs(A1(1)) >= alpha*omega_1
             % original is good enough, do nothing
-            pvttypesum(1) = pvttypesum(1)+1;
-            accept_small_pvt = true;
+            D(dd,dd) = A1(1);
+            invD(dd,dd) = 1/A1(1);
+            pvttype = 1;    pvttypesum(1) = pvttypesum(1)+1;    s = 1;
         % otherwise, the second candidate coordinate pivot row/column must be 
         % formed for further comparison and pivot selection
         else
@@ -145,80 +159,107 @@ while dd <= n
             % the leading 1x1 pivot (i.e., (1,1) element) is relatively large
             if abs(A1(1))*omega_r >= alpha*omega_1^2
                 % do nothing
-                accept_small_pvt = true;
-                pvttypesum(1) = pvttypesum(1)+1;
+                D(dd,dd) = A1(1);
+                invD(dd,dd) = 1/A1(1);
+                pvttype =  1;    pvttypesum(1) = pvttypesum(1)+1;   s = 1;
             % the second 1x1 pivot (i.e., (r,r) element) is relatively large
             elseif abs(Ar(r)) >= alpha*omega_r
+                order(p(dd+r-1)) = order(p(dd));
                 tmp = p(dd);     p(dd) = p(dd+r-1);    p(dd+r-1) = tmp;
                 reordered = true;
+                s = 1;
                 D(dd,dd) = Ar(r);
-                pvttypesum(2) = pvttypesum(2)+1;
+                invD(dd) = 1/Ar(r);
+                pvttype = 2;    pvttypesum(2) = pvttypesum(2)+1;
             % both the leading and the second 1x1 pivots are relatively small
             % compared to the (1,r) (r,1) elements; use 2x2 pivot instead
             else
-                tmp = p(dd+1);   p(dd+1) = p(dd+r-1);  p(dd+r-1) = tmp;
+                tmp = p(dd+1);
+                p(dd+1) = p(dd+r-1);
+                p(dd+r-1) = tmp;
+                order(p(dd+r-1)) = order(p(dd+1));
                 reordered = true;
-                D(dd,dd) = A1(1);   D(dd+1, dd+1) = Ar(r);
-                D(dd,dd+1) = A1(r); D(dd+1, dd) = A1(r);
+                s = 2;
+                D(dd:dd+1,dd:dd+1) = [A1(1) A1(r); A1(r) Ar(r)];
+                invD(dd:dd+1,dd:dd+1) = D(dd:dd+1,dd:dd+1)\speye(2,2);
                 pvttype = 3;    pvttypesum(3) = pvttypesum(3)+1;
             end
         end
+
+
+%             if pvttype == 1
+%                 PvtCols = A1';
+%             elseif pvttype == 2
+%                 PvtCols = Ar';  PvtCols([1 r]) = PvtCols([r 1]);
+%             else
+%                 PvtCols = [A1 Ar]'; PvtCols(:,[2 r]) = PvtCols(:,[r 2]);
+%             end
+%             codnt_mag = sum(abs(PvtCols(:,s+1:end)),1);
+%             idx = find(codnt_mag >= eps/2*norm(codnt_mag,'inf'));
+%             GS_coeffs = PvtCols(:,1:s)\PvtCols(:,s+idx);
+%             updt_col_idx = (dd+s):n;
+%             updt_col_idx = updt_col_idx(idx);
+%             M(:,p(updt_col_idx)) = M(:,p(updt_col_idx)) - M_pvtcols*GS_coeffs;
+            c = dd;
+            dd = dd + s;
+            reordered = false;
+            if reordered
+                    % After dropping small elements in M_u, we perform a dynamic reordering
+                    % of the columns of M_u. A complete reordering of all columns of M_u is
+                    % performed every complete_reorder_step_count steps of the inverse 
+                    % factorization; otherwise the leading r+1 columns of M_u are reordered
+                    
+                    if floor(dd/complete_reorder_step_size) > complete_reorder_step_count
+                        complete_reorder_step_count = floor(dd/complete_reorder_step_size);
+                        num_cols_reorder = n-dd+1;
+                    else
+                        num_cols_reorder = min([r+1 n-dd+1]);
+                    end
+                    
+                    % Reorder the columns of M_u according to their number of nonzeros. 
+                    % The pool of candidate columns contains all columns of M_u reordered.
+                    M_spones = M(:,p(dd:dd-1+num_cols_reorder)) ~= 0;
+                    nnz_column = sum(M_spones,1);
+                    nnz_row = sum(M_spones,2);
+                    [nnz_column,idx] = sort(nnz_column);
+                    p(dd:dd-1+num_cols_reorder) = p(dd-1+idx);
+                    
+                    % Then, choose the sparse columns from the pool that are marginally
+                    % denser than the sparsest column. Specifically, if the densest column
+                    % in the pool has 2-10 nonzeros, then the columns that are denser than 
+                    % the sparsest column by 1 element are considered; if the denest column
+                    % has 11-100 nonzeros, then those denser than the sparsest by 2 entries
+                    % are considered, and so on (a heuristic). 
+                    % Among these sparse columns of M_u, the one with the largest inf-norm 
+                    % is placed at the leading position. Such a sparse column of relatively 
+                    % large norm is likely to become a single pivot column at the next step
+                    % of factorization, producing essentially a minimal number of fill-ins
+                    % during the A-orthogonalization step
+                    
+                    nscr = find(nnz_column >= nnz_column(1)+ceil(log10(nnz_column(end)))+1,1)-1;
+                    if isempty(nscr),   nscr = num_cols_reorder;    end
+                    nscr = min([nscr 100]);
+                    Mdg = max(abs(M(:,p(dd:dd-1+nscr))),[],1);
+                    [~,idx] = sort(Mdg,'descend');
+                    p(dd:dd-1+nscr) = p(dd-1+idx);
+                    nscr = min([ceil(nscr/10) n-dd+1]);
+                    fillin = zeros(nscr,1);
+                    for zz = 1 : nscr
+                        fillin_row_idx = find(M(:,p(dd-1+zz)));
+                        fillin(zz) = num_cols_reorder*length(fillin_row_idx) - sum(nnz_row(fillin_row_idx));
+                    end
+                    [~,fillin_idx] = sort(fillin);
+                    p(dd:dd-1+nscr) = p(dd-1+fillin_idx);
+                    reordered = false;
+            end
+            
         continue;
         %return to left looking
     end
 
     M(:,p(pvt_idx)) = M_pvtcols;
     D(pvt_idx,pvt_idx) = nxt_pvt;
-
-    if reordered
-        % After dropping small elements in M_u, we perform a dynamic reordering
-        % of the columns of M_u. A complete reordering of all columns of M_u is
-        % performed every complete_reorder_step_count steps of the inverse 
-        % factorization; otherwise the leading r+1 columns of M_u are reordered
-        
-        if floor(dd/complete_reorder_step_size) > complete_reorder_step_count
-            complete_reorder_step_count = floor(dd/complete_reorder_step_size);
-            num_cols_reorder = n-dd+1;
-        else
-            num_cols_reorder = min([r+1 n-dd+1]);
-        end
-        
-        % Reorder the columns of M_u according to their number of nonzeros. 
-        % The pool of candidate columns contains all columns of M_u reordered.
-        M_spones = M(:,p(dd:dd-1+num_cols_reorder)) ~= 0;
-        nnz_column = sum(M_spones,1);
-        nnz_row = sum(M_spones,2);
-        [nnz_column,idx] = sort(nnz_column);
-        p(dd:dd-1+num_cols_reorder) = p(dd-1+idx);
-        
-        % Then, choose the sparse columns from the pool that are marginally
-        % denser than the sparsest column. Specifically, if the densest column
-        % in the pool has 2-10 nonzeros, then the columns that are denser than 
-        % the sparsest column by 1 element are considered; if the denest column
-        % has 11-100 nonzeros, then those denser than the sparsest by 2 entries
-        % are considered, and so on (a heuristic). 
-        % Among these sparse columns of M_u, the one with the largest inf-norm 
-        % is placed at the leading position. Such a sparse column of relatively 
-        % large norm is likely to become a single pivot column at the next step
-        % of factorization, producing essentially a minimal number of fill-ins
-        % during the A-orthogonalization step
-        
-        nscr = find(nnz_column >= nnz_column(1)+ceil(log10(nnz_column(end)))+1,1)-1;
-        if isempty(nscr),   nscr = num_cols_reorder;    end
-        nscr = min([nscr 100]);
-        Mdg = max(abs(M(:,p(dd:dd-1+nscr))),[],1);
-        [~,idx] = sort(Mdg,'descend');
-        p(dd:dd-1+nscr) = p(dd-1+idx);
-        nscr = min([ceil(nscr/10) n-dd+1]);
-        fillin = zeros(nscr,1);
-        for zz = 1 : nscr
-            fillin_row_idx = find(M(:,p(dd-1+zz)));
-            fillin(zz) = num_cols_reorder*length(fillin_row_idx) - sum(nnz_row(fillin_row_idx));
-        end
-        [~,fillin_idx] = sort(fillin);
-        p(dd:dd-1+nscr) = p(dd-1+fillin_idx);
-        reordered = false;
-    end
+    
 
     if s == 1 && abs(D(dd,dd)) < 64*sqrt(eps)*normA%) || (s == 2 && cond(full(D(dd:dd+1,dd:dd+1)))>1e16)
         D(dd,dd) = sign(0.5+sign(real(D(dd,dd))))*1e-2*normA;
@@ -252,7 +293,7 @@ while dd <= n
 %     if tens_percent_done >= 5
 %         fprintf('Step %d, nnz(M) = %d, norm(M) = %.3d, cond(D) = %.3d.\n',dd,nnz(M),norm(M,'fro'),condD);
 %     end
-ends
+end
 nnzM = nnz(M);
 
 M = M(p,p);
